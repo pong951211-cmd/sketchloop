@@ -201,8 +201,12 @@ label.inline{display:inline-flex;align-items:center;gap:6px;margin:0 14px 6px 0;
   display:grid;place-items:center;overflow:hidden;
   padding:44px 10px 62px;              /* 讓開上下的操作列，圖片不會被蓋住 */
 }
+/* width/height 100% + object-fit:contain ＝「等比例縮放到剛好塞滿可用區域」，
+   小圖也會被放大（max-width/max-height 只會縮小，不會放大，所以 736px 寬的
+   Pinterest 圖在大螢幕上只佔一小塊）。同時因為 img 的框就等於 .stage 的框，
+   圖片也不可能溢出畫面。 */
 .stage img{
-  max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;
+  width:100%;height:100%;object-fit:contain;
   transition:filter .15s, transform .15s;
   -webkit-user-select:none;user-select:none;-webkit-user-drag:none;
 }
