@@ -60,16 +60,18 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 
 /* ============================ 狀態 ============================ */
 
+/* 出圖順序的合法值。必須宣告在 state 之前 —— state 的初始化會呼叫
+   loadSettings()，而它會用到這個常數。 */
+const ORDERS = ['random', 'least', 'fresh', 'seq'];
+
 const state = {
   cats: [],            // {id, name, createdAt}
-  images: [],          // 不含 blob 的清單 {id, catId, name, w, h, createdAt}
+  images: [],          // 不含 blob 的清單 {id, catId, name, plays, ...}
   thumbs: new Map(),   // id -> objectURL
   currentCat: 'all',
   selected: new Set(),
   settings: loadSettings(),
 };
-
-const ORDERS = ['random', 'least', 'fresh', 'seq'];
 
 function loadSettings() {
   const d = { sec: 60, endMode: 'all', endCount: 10, endMinutes: 30,
