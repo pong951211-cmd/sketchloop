@@ -69,11 +69,18 @@ const state = {
   settings: loadSettings(),
 };
 
+const ORDERS = ['random', 'least', 'fresh', 'seq'];
+
 function loadSettings() {
   const d = { sec: 60, endMode: 'all', endCount: 10, endMinutes: 30,
-              shuffle: true, loop: false, gray: false, sound: true, scope: [] };
-  try { return Object.assign(d, JSON.parse(localStorage.getItem('sketchloop.settings') || '{}')); }
+              order: 'random', loop: false, gray: false, sound: true, scope: [] };
+  let s = d;
+  try { s = Object.assign(d, JSON.parse(localStorage.getItem('sketchloop.settings') || '{}')); }
   catch { return d; }
+  // 舊版存的是 shuffle: true/false
+  if (!ORDERS.includes(s.order)) s.order = s.shuffle === false ? 'seq' : 'random';
+  delete s.shuffle;
+  return s;
 }
 function saveSettings() {
   localStorage.setItem('sketchloop.settings', JSON.stringify(state.settings));
@@ -143,8 +150,26 @@ async function loadAll() {
   state.thumbs.clear();
   state.images = raw.map(r => {
     if (r.thumb) state.thumbs.set(r.id, URL.createObjectURL(r.thumb));
-    return { id: r.id, catId: r.catId, name: r.name, w: r.w, h: r.h, createdAt: r.createdAt, size: r.size || 0 };
+    return { id: r.id, catId: r.catId, name: r.name, w: r.w, h: r.h, createdAt: r.createdAt,
+             size: r.size || 0, plays: r.plays || 0, lastPlayedAt: r.lastPlayedAt || 0 };
   });
+}
+
+const metaOf  = id => state.images.find(i => i.id === id);
+const playsOf = id => metaOf(id)?.plays || 0;
+
+/** 某張圖被播出時：練過次數 +1、記下時間（記憶體與資料庫都更新）。 */
+function bumpPlay(id) {
+  const now = Date.now();
+  const meta = metaOf(id);
+  if (meta) { meta.plays = (meta.plays || 0) + 1; meta.lastPlayedAt = now; }
+  tx('images', 'readwrite', is => {
+    const r = is.get(id);
+    r.onsuccess = () => {
+      const v = r.result;
+      if (v) { v.plays = (v.plays || 0) + 1; v.lastPlayedAt = now; is.put(v); }
+    };
+  }).catch(() => {});
 }
 
 function catName(id) {
@@ -261,12 +286,23 @@ function renderGrid() {
     const cell = document.createElement('div');
     cell.className = 'cell' + (state.selected.has(img.id) ? ' sel' : '');
     cell.dataset.id = img.id;
+    if (!img.plays) cell.classList.add('fresh');
     const el = document.createElement('img');
     el.loading = 'lazy';
     el.src = state.thumbs.get(img.id) || '';
     el.alt = img.name || '';
-    el.title = `${img.name || ''}${img.w ? `  ${img.w}×${img.h}` : ''}`;
+    el.title = [
+      img.name || '',
+      img.w ? `${img.w}×${img.h}` : '',
+      img.plays ? `練過 ${img.plays} 次，最後 ${fmtDate(img.lastPlayedAt)}` : '還沒練過',
+    ].filter(Boolean).join('  ·  ');
     cell.appendChild(el);
+    if (img.plays) {
+      const b = document.createElement('span');
+      b.className = 'plays';
+      b.textContent = img.plays;
+      cell.appendChild(b);
+    }
     cell.addEventListener('click', () => toggleSelect(img.id));
     cell.addEventListener('dblclick', () => startPractice([img.id]));
     frag.appendChild(cell);
@@ -336,6 +372,13 @@ async function updateStorageInfo() {
   $('#storageInfo').textContent = txt;
 }
 
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function fmtBytes(b) {
   if (!b) return '0 MB';
   const u = ['B', 'KB', 'MB', 'GB'];
@@ -378,11 +421,12 @@ async function addImage(blob, { name = '', catId = '', minPx = 0 } = {}) {
   if (minPx && w && h && Math.max(w, h) < minPx) {
     throw new Error(`圖太小（${w}×${h}），略過`);
   }
-  const rec = { id: uid(), catId, name, blob, thumb, w, h,
+  const rec = { id: uid(), catId, name, blob, thumb, w, h, plays: 0, lastPlayedAt: 0,
                 size: blob.size + thumb.size, createdAt: Date.now() };
   await dbPut('images', rec);
   state.thumbs.set(rec.id, URL.createObjectURL(thumb));
-  state.images.push({ id: rec.id, catId, name, w, h, createdAt: rec.createdAt, size: rec.size });
+  state.images.push({ id: rec.id, catId, name, w, h, createdAt: rec.createdAt,
+                      size: rec.size, plays: 0, lastPlayedAt: 0 });
   return rec.id;
 }
 
@@ -473,11 +517,16 @@ async function fetchBoardImages(boardUrl, limit) {
       if (j.total > j.count) logImport(`看板 RSS 提供 ${j.total} 張，依設定取 ${j.count} 張。`);
       return j.images;
     }
-    // 後端明確說「看板不存在／不公開」時，不需要再試代理
-    if (j?.error && r.status === 404) throw new Error(j.error);
+    if (j?.tried) j.tried.forEach(t => logImport(`　試過：${t}`, false));
+    // 400／404 是「網址本身有問題」，後端的說明最準確，不必再試代理
+    if (j?.error && (r.status === 400 || r.status === 404)) {
+      const err = new Error(j.error);
+      err.fatal = true;
+      throw err;
+    }
     backendErr = j?.error || `HTTP ${r.status}`;
   } catch (e) {
-    if (e.message?.length > 20) throw e;      // 後端給的具體說明，直接往上丟
+    if (e.fatal) throw e;
     backendErr = e.message;
   }
   logImport(`後端函式不可用（${backendErr}），改用公共代理讀取看板 RSS…`, false);
@@ -485,8 +534,14 @@ async function fetchBoardImages(boardUrl, limit) {
   // 2) 本機沒有後端時：借公共代理讀看板的 RSS。
   //    注意只讀 RSS，不去掃看板網頁 —— 網頁上混著頭像、介面圖示和推薦圖，
   //    分不出哪張才是看板內容（這是舊版會抓進一堆無關圖片的原因）。
-  const parts = new URL(boardUrl).pathname.split('/').filter(Boolean);
-  const rss = `${new URL(boardUrl).origin}/${parts.slice(0, 2).join('/')}.rss`;
+  const u = new URL(boardUrl);
+  if (/(^|\.)pin\.it$/i.test(u.hostname)) {
+    throw new Error('本機版沒辦法展開 pin.it 短連結。請在瀏覽器打開那個短連結，' +
+                    '把跳轉後網址列上的看板網址複製過來（或改用線上版）。');
+  }
+  const parts = u.pathname.split('/').filter(Boolean);
+  if (parts.length < 2) throw new Error('這不是看板網址（格式：pinterest.com/使用者/看板名/）。');
+  const rss = `${u.origin}/${parts.slice(0, 2).join('/')}.rss`;
   const wrappers = [
     u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
     u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
@@ -550,7 +605,7 @@ async function importPinterest() {
     renderCats(); renderGrid();
   } catch (e) {
     logImport(`✕ ${e.message}`, false);
-    toast('看板匯入失敗，詳見匯入紀錄');
+    toast(e.message, 8000);
   } finally {
     btn.disabled = false; btn.textContent = '抓取看板';
   }
@@ -602,10 +657,11 @@ function fillForm() {
   $$('#durBox .chip').forEach(c => c.classList.toggle('active', +c.dataset.sec === s.sec));
   $('#durCustom').value = $$('#durBox .chip').some(c => +c.dataset.sec === s.sec) ? '' : s.sec;
 
+  $$('#orderBox .chip').forEach(c => c.classList.toggle('active', c.dataset.order === s.order));
+
   $(`input[name=endMode][value="${s.endMode}"]`).checked = true;
   $('#endCount').value   = s.endCount;
   $('#endMinutes').value = s.endMinutes;
-  $('#optShuffle').checked = s.shuffle;
   $('#optLoop').checked    = s.loop;
   $('#optGray').checked    = s.gray;
   $('#optSound').checked   = s.sound;
@@ -625,10 +681,10 @@ function readForm() {
             : (activeChip ? +activeChip.dataset.sec : 60);
   return {
     sec,
+    order:     $('#orderBox .chip.active')?.dataset.order || 'random',
     endMode:   $('input[name=endMode]:checked').value,
     endCount:  Math.max(1, +$('#endCount').value || 10),
     endMinutes:Math.max(1, +$('#endMinutes').value || 30),
-    shuffle:   $('#optShuffle').checked,
     loop:      $('#optLoop').checked,
     gray:      $('#optGray').checked,
     sound:     $('#optSound').checked,
@@ -637,22 +693,36 @@ function readForm() {
 }
 
 function poolFor(cfg, forced) {
-  if (forced?.length) return forced.slice();
-  if (cfg.scope.length) {
-    return state.images.filter(i => cfg.scope.includes(i.catId)).map(i => i.id);
-  }
-  return state.images.map(i => i.id);
+  let ids;
+  if (forced?.length) ids = forced.slice();
+  else if (cfg.scope.length) ids = state.images.filter(i => cfg.scope.includes(i.catId)).map(i => i.id);
+  else ids = state.images.map(i => i.id);
+  if (cfg.order === 'fresh') ids = ids.filter(id => !playsOf(id));
+  return ids;
 }
 
 function updateHint() {
   const cfg = readForm();
   const pool = poolFor(cfg, openPractice._forced);
-  let txt = `可用圖片 ${pool.length} 張 · 每張 ${fmtTime(cfg.sec)}`;
+  const el = $('#practiceHint');
+
+  if (!pool.length) {
+    el.textContent = cfg.order === 'fresh'
+      ? '這個範圍裡每張都練過了 —— 換成「最少練過優先」或「隨機」，或先匯入新圖。'
+      : '這個範圍裡沒有圖片。';
+    $('#btnGo').disabled = true;
+    return;
+  }
+
+  const fresh = pool.filter(id => !playsOf(id)).length;
+  let txt = `可用圖片 ${pool.length} 張`;
+  if (cfg.order !== 'fresh' && fresh) txt += `（其中 ${fresh} 張沒練過）`;
+  txt += ` · 每張 ${fmtTime(cfg.sec)}`;
   if (cfg.endMode === 'all')   txt += ` · 預計總長 ${fmtTime(pool.length * cfg.sec)}`;
   if (cfg.endMode === 'count') txt += ` · 共 ${cfg.endCount} 張，約 ${fmtTime(cfg.endCount * cfg.sec)}`;
   if (cfg.endMode === 'time')  txt += ` · 倒數 ${cfg.endMinutes} 分（約 ${Math.floor(cfg.endMinutes * 60 / cfg.sec)} 張）`;
-  $('#practiceHint').textContent = txt;
-  $('#btnGo').disabled = pool.length === 0;
+  el.textContent = txt;
+  $('#btnGo').disabled = false;
 }
 
 function fmtTime(sec) {
@@ -701,18 +771,35 @@ function startPractice(forcedIds) {
   P.raf = requestAnimationFrame(tick);
 }
 
+/** 依「出圖順序」設定把整池排好放進 bag（從尾端 pop，所以要反轉）。 */
+function buildBag() {
+  const ids = P.pool.slice();
+
+  if (P.cfg.order === 'seq') {              // 依加入順序
+    P.bag = ids.reverse();
+    return;
+  }
+  if (P.cfg.order === 'least') {            // 最少練過優先，同分則最久沒練的先
+    const m = new Map(state.images.map(i => [i.id, i]));
+    ids.sort((a, b) => {
+      const A = m.get(a) || {}, B = m.get(b) || {};
+      return (A.plays || 0) - (B.plays || 0)
+          || (A.lastPlayedAt || 0) - (B.lastPlayedAt || 0)
+          || Math.random() - 0.5;
+    });
+    P.bag = ids.reverse();
+    return;
+  }
+  // random / fresh：洗牌，一輪內不重複
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  P.bag = ids;
+}
+
 function nextFromBag() {
-  if (!P.cfg.shuffle) {
-    const n = P.pool[P.shown % P.pool.length];
-    return n;
-  }
-  if (!P.bag.length) {
-    P.bag = P.pool.slice();
-    for (let i = P.bag.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [P.bag[i], P.bag[j]] = [P.bag[j], P.bag[i]];
-    }
-  }
+  if (!P.bag.length) buildBag();
   return P.bag.pop();
 }
 
@@ -733,8 +820,10 @@ async function advance(dir, retry = 0) {
       P.idx++;                                  // 走回之前 prev 的歷史
     } else {
       if (P.cfg.endMode === 'all' && !P.cfg.loop && P.shown >= P.pool.length) return finish();
-      P.played.push(nextFromBag());
+      const id = nextFromBag();
+      P.played.push(id);
       P.idx = P.played.length - 1;
+      bumpPlay(id);                             // 只有「第一次播出」才計數
     }
     P.shown++;
     if (P.cfg.sound) beep();
@@ -840,6 +929,7 @@ function quitPlayer() {
   $('#stageImg').removeAttribute('src');
   $('#player').hidden = true;
   $('#pausedBadge').hidden = true;
+  renderGrid();                 // 讓縮圖上的練習次數更新
   if (document.fullscreenElement) {
     try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch {}
   }
@@ -900,6 +990,11 @@ function bind() {
     $$('#durBox .chip').forEach(x => x.classList.remove('active'));
     c.classList.add('active');
     $('#durCustom').value = '';
+    updateHint();
+  }));
+  $$('#orderBox .chip').forEach(c => c.addEventListener('click', () => {
+    $$('#orderBox .chip').forEach(x => x.classList.remove('active'));
+    c.classList.add('active');
     updateHint();
   }));
   $('#durCustom').addEventListener('input', () => {

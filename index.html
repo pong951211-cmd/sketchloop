@@ -19,6 +19,7 @@
   <nav class="tabs">
     <button class="tab active" data-view="gallery">圖庫</button>
     <button class="tab" data-view="import">匯入</button>
+    <button class="tab" data-view="help">說明</button>
   </nav>
   <div class="topbar-right">
     <span id="storageInfo" class="muted"></span>
@@ -66,6 +67,11 @@
     <div class="panel">
       <h2>從圖片網址匯入</h2>
       <p class="muted">一行一個圖片直連網址（<code>.jpg</code> / <code>.png</code> / <code>.webp</code>…）。可一次貼很多行。</p>
+      <ul class="rules">
+        <li>要的是<strong>圖片本身</strong>的網址（在圖片上按右鍵 →「複製圖片位址」），不是那個網頁的網址。</li>
+        <li>部分網站禁止其他站台取用它的圖片，這種會失敗並列在下方紀錄裡，換個來源即可。</li>
+        <li>長邊小於 240 像素的圖會自動略過（那通常是圖示或縮圖，畫起來太小）。</li>
+      </ul>
       <textarea id="urlList" rows="7" placeholder="https://example.com/pose-01.jpg&#10;https://example.com/pose-02.png"></textarea>
       <div class="row">
         <label>存到分類
@@ -77,7 +83,13 @@
 
     <div class="panel">
       <h2>從 Pinterest 公開看板匯入</h2>
-      <p class="muted">貼看板連結，例如 <code>https://www.pinterest.com/使用者/看板名/</code>。部署到 Vercel 後由後端函式抓取最穩定；本機會嘗試公共代理。</p>
+      <p class="muted">貼<strong>看板頁</strong>的連結，格式是 <code>pinterest.com/使用者/看板名/</code>。</p>
+      <ul class="rules">
+        <li><strong>一次最多約 25 張</strong>，而且是看板裡「最新」的那些 —— 這是 Pinterest 對外只提供最新 25 筆的限制，不是設定問題。看板再大也只拿得到這些。</li>
+        <li>看板必須是<strong>公開</strong>的。私人看板、密友看板抓不到。</li>
+        <li>網址要是看板頁。<strong>單張釘圖</strong>（<code>/pin/12345</code>）或<strong>個人首頁</strong>（<code>pinterest.com/使用者/</code>）都不行。</li>
+        <li>只會抓看板裡真正的釘圖，不會混進 Pinterest 的推薦圖、頭像或介面圖示。</li>
+      </ul>
       <input id="pinUrl" type="url" placeholder="https://www.pinterest.com/username/board-name/">
       <div class="row">
         <label>最多抓取
@@ -92,7 +104,71 @@
 
     <div class="panel">
       <h2>匯入紀錄</h2>
+      <p class="muted">失敗時這裡會寫出原因和它試過的網址，回報問題時請把這塊一起截圖。</p>
       <div id="importLog" class="log muted">尚無紀錄。</div>
+    </div>
+  </section>
+
+  <!-- 說明 -->
+  <section class="view" id="view-help">
+    <div class="panel help">
+      <h2>圖片存在哪裡</h2>
+      <p>圖片存在<strong>你這台裝置、這個瀏覽器</strong>裡（用瀏覽器的本機資料庫 IndexedDB），沒有上傳到任何伺服器，也沒有人看得到。因此：</p>
+      <ul class="rules">
+        <li>換一台裝置、或換一個瀏覽器（Chrome ↔ Edge）看到的都是<strong>各自獨立</strong>的圖庫。</li>
+        <li><strong>清除瀏覽資料就會消失</strong>。無痕視窗關掉即清空，別在無痕模式整理圖庫。</li>
+        <li>iPhone／iPad 的 Safari 若長期沒開這個網站，可能會自己清掉資料；建議用「加入主畫面」降低機率。</li>
+        <li>怕不見就按側欄的<strong>備份 JSON</strong>，會下載一個含全部分類與原圖的檔案。（目前只能匯出，還不能匯入還原。）</li>
+        <li>容量看瀏覽器分配，通常幾百 MB 到幾 GB，右上角會顯示目前用量與剩餘。</li>
+      </ul>
+    </div>
+
+    <div class="panel help">
+      <h2>Pinterest 看板匯入的規則</h2>
+      <ul class="rules">
+        <li><strong>一次最多約 25 張，而且是最新的那些。</strong>Pinterest 對外只提供每個看板最新 20～25 筆，看板再大也拿不到更多。這是它的限制，不是這裡的設定問題。</li>
+        <li>看板必須<strong>公開</strong>。注意「公開」是看板自己的設定 —— 帳號公開但看板設成私人／密友，一樣抓不到。</li>
+        <li>要貼<strong>看板頁</strong>的網址（<code>pinterest.com/使用者/看板名/</code>）。單張釘圖 <code>/pin/12345</code> 和個人首頁都不行。手機 App 分享的 <code>pin.it</code> 短連結可以，會自動展開。</li>
+        <li>只會抓看板裡真正的釘圖，<strong>不會</strong>混入 Pinterest 的推薦圖、頭像或介面圖示。</li>
+        <li>失敗時到「匯入」頁最下面的<strong>匯入紀錄</strong>看原因，那裡會列出它試過哪些網址、Pinterest 回了什麼。</li>
+      </ul>
+    </div>
+
+    <div class="panel help">
+      <h2>圖片網址匯入的規則</h2>
+      <ul class="rules">
+        <li>要<strong>圖片本身</strong>的網址：在圖片上按右鍵 →「複製圖片位址」。網頁的網址沒有用。</li>
+        <li>有些網站禁止其他站台取用它的圖片，這種會失敗；換個來源就好。</li>
+        <li>長邊小於 <strong>240 像素</strong>的圖會自動略過（那通常是圖示或縮圖）。</li>
+      </ul>
+    </div>
+
+    <div class="panel help">
+      <h2>練習紀錄怎麼算</h2>
+      <ul class="rules">
+        <li>每張圖播出時會記下<strong>練過次數</strong>和<strong>最後練習時間</strong>，圖庫縮圖右下角的數字就是次數。</li>
+        <li>「上一張」回頭看不會重複計數。</li>
+        <li>出圖順序可以選 <strong>最少練過優先</strong>（把冷落的圖排前面）或 <strong>只練沒練過</strong>（只出從沒播過的圖）。</li>
+        <li>紀錄和圖片一樣只存在這台裝置的瀏覽器裡。</li>
+      </ul>
+    </div>
+
+    <div class="panel help">
+      <h2>播放中的快捷鍵</h2>
+      <ul class="keys">
+        <li><kbd>空白鍵</kbd> 暫停／繼續</li>
+        <li><kbd>←</kbd> <kbd>→</kbd> 上一張／下一張</li>
+        <li><kbd>G</kbd> 灰階</li>
+        <li><kbd>F</kbd> 水平翻轉</li>
+        <li><kbd>H</kbd> 隱藏介面</li>
+        <li><kbd>Esc</kbd> 結束練習</li>
+      </ul>
+      <p class="muted">手機、平板沒有鍵盤，用畫面下方的按鈕即可；點圖片本身就是暫停。</p>
+    </div>
+
+    <div class="panel help">
+      <h2>版權</h2>
+      <p class="muted">抓來的參考圖著作權屬於原作者。請只用於<strong>個人練習</strong>，不要公開發布、轉載或商用。</p>
     </div>
   </section>
 </main>
@@ -134,8 +210,17 @@
     </div>
 
     <div class="field">
+      <span class="field-label">出圖順序</span>
+      <div class="chips" id="orderBox">
+        <button class="chip active" data-order="random">隨機</button>
+        <button class="chip" data-order="least">最少練過優先</button>
+        <button class="chip" data-order="fresh">只練沒練過</button>
+        <button class="chip" data-order="seq">依加入順序</button>
+      </div>
+    </div>
+
+    <div class="field">
       <span class="field-label">選項</span>
-      <label class="inline"><input type="checkbox" id="optShuffle" checked> 隨機順序</label>
       <label class="inline"><input type="checkbox" id="optLoop"> 循環播放</label>
       <label class="inline"><input type="checkbox" id="optGray"> 灰階</label>
       <label class="inline"><input type="checkbox" id="optSound" checked> 換圖提示音</label>

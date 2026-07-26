@@ -126,6 +126,18 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
   background:var(--accent);color:#fff;font-size:13px;
   display:grid;place-items:center;
 }
+.cell .plays{
+  position:absolute;right:5px;bottom:5px;
+  min-width:19px;height:19px;padding:0 5px;border-radius:999px;
+  background:#000000ad;border:1px solid #ffffff2e;
+  font-size:11px;line-height:17px;text-align:center;
+  font-variant-numeric:tabular-nums;
+}
+.cell.fresh::before{
+  content:"";position:absolute;left:0;top:0;
+  border:9px solid transparent;border-left-color:var(--accent);border-top-color:var(--accent);
+  border-top-left-radius:8px;
+}
 .empty{padding:40px 6px;color:var(--muted);text-align:center;display:none}
 .empty.show{display:block}
 
@@ -136,6 +148,19 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 }
 .panel .row{display:flex;align-items:flex-end;gap:12px;margin-top:10px;flex-wrap:wrap}
 .panel label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.panel.help{line-height:1.75}
+.panel.help h2{margin-bottom:8px}
+.rules{margin:8px 0 0;padding-left:20px;color:var(--muted);font-size:13.5px}
+.rules li{margin-bottom:5px}
+.rules strong{color:var(--text)}
+.keys{list-style:none;margin:8px 0 12px;padding:0;display:grid;gap:6px;
+      grid-template-columns:repeat(auto-fill,minmax(210px,1fr));font-size:13.5px}
+kbd{
+  display:inline-block;min-width:22px;text-align:center;
+  background:var(--bg3);border:1px solid var(--line);border-bottom-width:2px;
+  border-radius:6px;padding:1px 7px;margin-right:4px;
+  font-family:inherit;font-size:12px;
+}
 .log{max-height:240px;overflow:auto;font-size:13px;white-space:pre-wrap;line-height:1.7}
 .log .ok{color:#6cd39a}
 .log .err{color:#f0868f}
