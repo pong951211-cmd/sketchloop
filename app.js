@@ -153,7 +153,8 @@ async function loadAll() {
   state.images = raw.map(r => {
     if (r.thumb) state.thumbs.set(r.id, URL.createObjectURL(r.thumb));
     return { id: r.id, catId: r.catId, name: r.name, w: r.w, h: r.h, createdAt: r.createdAt,
-             size: r.size || 0, plays: r.plays || 0, lastPlayedAt: r.lastPlayedAt || 0 };
+             size: r.size || 0, plays: r.plays || 0, lastPlayedAt: r.lastPlayedAt || 0,
+             srcKey: r.srcKey || '' };
   });
 }
 
@@ -413,7 +414,33 @@ async function makeThumb(blob, max = 400) {
    自己上傳的檔案不受限制。 */
 const MIN_IMPORT_PX = 240;
 
-async function addImage(blob, { name = '', catId = '', minPx = 0 } = {}) {
+/* 判斷「這張圖是不是已經匯入過」用的鍵。
+   Pinterest 同一張圖在不同尺寸下網址不同，但檔名（一段內容雜湊）相同，
+   所以 pinimg 只比檔名；其他來源比「網域＋路徑」，忽略查詢字串。 */
+function srcKeyOf(url) {
+  try {
+    const u = new URL(url);
+    if (/(^|\.)pinimg\.com$/i.test(u.hostname)) {
+      return u.pathname.split('/').pop().toLowerCase();
+    }
+    return (u.origin + u.pathname).toLowerCase();
+  } catch {
+    return String(url).toLowerCase();
+  }
+}
+
+/** 目前圖庫裡所有已知的來源鍵。 */
+function existingSrcKeys() {
+  const s = new Set();
+  for (const i of state.images) {
+    if (i.srcKey) s.add(i.srcKey);
+    // 舊資料沒存 srcKey，但匯入時的圖片名稱就是來源檔名，可以拿來比對
+    else if (i.name) s.add(i.name.toLowerCase());
+  }
+  return s;
+}
+
+async function addImage(blob, { name = '', catId = '', minPx = 0, src = '' } = {}) {
   if (!blob || !blob.size) throw new Error('空檔案');
   if (!/^image\//.test(blob.type || '')) {
     // 有些來源沒給 type，試著讓 createImageBitmap 驗證
@@ -423,12 +450,13 @@ async function addImage(blob, { name = '', catId = '', minPx = 0 } = {}) {
   if (minPx && w && h && Math.max(w, h) < minPx) {
     throw new Error(`圖太小（${w}×${h}），略過`);
   }
+  const srcKey = src ? srcKeyOf(src) : '';
   const rec = { id: uid(), catId, name, blob, thumb, w, h, plays: 0, lastPlayedAt: 0,
-                size: blob.size + thumb.size, createdAt: Date.now() };
+                src, srcKey, size: blob.size + thumb.size, createdAt: Date.now() };
   await dbPut('images', rec);
   state.thumbs.set(rec.id, URL.createObjectURL(thumb));
   state.images.push({ id: rec.id, catId, name, w, h, createdAt: rec.createdAt,
-                      size: rec.size, plays: 0, lastPlayedAt: 0 });
+                      size: rec.size, plays: 0, lastPlayedAt: 0, srcKey });
   return rec.id;
 }
 
@@ -509,18 +537,23 @@ async function importUrls() {
   const catId = $('#urlTarget').value;
   const btn = $('#btnImportUrls');
   btn.disabled = true;
-  let ok = 0, fail = 0;
+  const seen = existingSrcKeys();
+  let ok = 0, fail = 0, dup = 0;
   for (const [i, url] of urls.entries()) {
     btn.textContent = `匯入中… ${i + 1}/${urls.length}`;
+    const key = srcKeyOf(url);
+    if (seen.has(key)) { dup++; logImport(`↷ 圖庫裡已經有了，略過 ${url}`); continue; }
     try {
       const blob = await fetchImageBlob(url);
-      await addImage(blob, { name: url.split('/').pop().slice(0, 60), catId, minPx: MIN_IMPORT_PX });
+      await addImage(blob, { name: url.split('/').pop().slice(0, 60), catId, minPx: MIN_IMPORT_PX, src: url });
+      seen.add(key);
       ok++; logImport(`✓ ${url}`);
     } catch (e) { fail++; logImport(`✕ ${url} — ${e.message}`, false); }
   }
   btn.disabled = false; btn.textContent = '開始匯入';
   if (ok) $('#urlList').value = '';
-  toast(`匯入完成：成功 ${ok}${fail ? `，失敗 ${fail}` : ''}`);
+  toast(`匯入完成：新增 ${ok} 張` +
+        `${dup ? `，略過重複 ${dup}` : ''}${fail ? `，失敗 ${fail}` : ''}`);
   renderCats(); renderGrid();
 }
 
@@ -620,17 +653,23 @@ async function importPinterest() {
   try {
     const urls = await fetchBoardImages(url, limit);
     logImport(`取得 ${urls.length} 個圖片網址，開始下載…`);
-    let ok = 0, fail = 0;
+    const seen = existingSrcKeys();
+    let ok = 0, fail = 0, dup = 0;
     for (const [i, u] of urls.entries()) {
       btn.textContent = `下載中… ${i + 1}/${urls.length}`;
+      const key = srcKeyOf(u);
+      if (seen.has(key)) { dup++; continue; }        // 已經匯入過，連下載都省了
       try {
         const blob = await fetchImageBlob(u);
-        await addImage(blob, { name: u.split('/').pop().slice(0, 60), catId, minPx: MIN_IMPORT_PX });
+        await addImage(blob, { name: u.split('/').pop().slice(0, 60), catId, minPx: MIN_IMPORT_PX, src: u });
+        seen.add(key);
         ok++;
       } catch (e) { fail++; logImport(`✕ ${u} — ${e.message}`, false); }
     }
-    logImport(`✓ 看板匯入完成：${ok} 張${fail ? `（失敗 ${fail}）` : ''}`);
-    toast(`看板匯入完成：${ok} 張`);
+    if (dup) logImport(`↷ 其中 ${dup} 張圖庫裡已經有了，略過（重抓同一個看板不會產生重複）`);
+    logImport(`✓ 看板匯入完成：新增 ${ok} 張${fail ? `，失敗 ${fail}` : ''}`);
+    toast(`看板匯入完成：新增 ${ok} 張` +
+          `${dup ? `，略過重複 ${dup}` : ''}${fail ? `，失敗 ${fail}` : ''}`);
     renderCats(); renderGrid();
   } catch (e) {
     logImport(`✕ ${e.message}`, false);

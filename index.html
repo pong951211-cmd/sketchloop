@@ -71,6 +71,7 @@
         <li>要的是<strong>圖片本身</strong>的網址（在圖片上按右鍵 →「複製圖片位址」），不是那個網頁的網址。</li>
         <li>部分網站禁止其他站台取用它的圖片，這種會失敗並列在下方紀錄裡，換個來源即可。</li>
         <li>長邊小於 240 像素的圖會自動略過（那通常是圖示或縮圖，畫起來太小）。</li>
+        <li>已經在圖庫裡的圖會自動略過，不會重複匯入。</li>
       </ul>
       <textarea id="urlList" rows="7" placeholder="https://example.com/pose-01.jpg&#10;https://example.com/pose-02.png"></textarea>
       <div class="row">
@@ -127,6 +128,7 @@
         <li>看板必須<strong>公開</strong>。注意「公開」是看板自己的設定 —— 帳號公開但看板設成私人／密友，一樣抓不到。</li>
         <li>要貼<strong>看板頁</strong>的網址（<code>pinterest.com/使用者/看板名/</code>）。單張釘圖 <code>/pin/12345</code> 和個人首頁都不行。手機 App 分享的 <code>pin.it</code> 短連結可以，會自動展開。</li>
         <li>只會抓看板裡真正的釘圖，<strong>不會</strong>混入 Pinterest 的推薦圖、頭像或介面圖示。</li>
+        <li><strong>重複的圖會自動略過</strong>，所以同一個看板可以放心多抓幾次 —— 只會補上新的，不會產生重複。（Pinterest 有時只給看板的一部分，隔幾分鐘重抓通常會多拿到一些。）</li>
         <li>失敗時到「匯入」頁最下面的<strong>匯入紀錄</strong>看原因，那裡會列出它試過哪些網址、Pinterest 回了什麼。</li>
       </ul>
     </div>
