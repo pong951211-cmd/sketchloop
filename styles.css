@@ -198,20 +198,27 @@ label.inline{display:inline-flex;align-items:center;gap:6px;margin:0 14px 6px 0;
    .stage 的高度由 flex 決定，百分比才有意義，圖片就一定裝得進去。 */
 .stage{
   flex:1 1 0;min-height:0;min-width:0;
-  display:grid;place-items:center;overflow:hidden;
-  padding:44px 10px 62px;              /* 讓開上下的操作列，圖片不會被蓋住 */
+  position:relative;overflow:hidden;
 }
-/* width/height 100% + object-fit:contain ＝「等比例縮放到剛好塞滿可用區域」，
-   小圖也會被放大（max-width/max-height 只會縮小，不會放大，所以 736px 寬的
-   Pinterest 圖在大螢幕上只佔一小塊）。同時因為 img 的框就等於 .stage 的框，
-   圖片也不可能溢出畫面。 */
+/* 圖片用「絕對定位 + inset:0」貼滿 .stage。
+   為什麼不用 grid/flex 置中再配 max-height:100%：那樣百分比高度會因為父層
+   高度「不確定」而算不出來，瀏覽器就改用原圖比例把圖片框撐開 —— 實測 500x1400
+   的圖在 800px 高的顯示區裡，框會變成 4374px 高，超出的部分被裁掉。
+   絕對定位的百分比是對照 containing block（此處是 .stage 的 padding box，
+   高度明確），所以一定算得出來。
+   再加上 box-sizing:border-box + padding，讓圖片內容避開上下操作列；
+   object-fit:contain 則負責等比例縮放到剛好填滿（小圖也會放大）。 */
 .stage img{
-  width:100%;height:100%;object-fit:contain;
+  position:absolute;inset:0;
+  width:100%;height:100%;
+  box-sizing:border-box;
+  padding:44px 10px 62px;
+  object-fit:contain;
   transition:filter .15s, transform .15s;
   -webkit-user-select:none;user-select:none;-webkit-user-drag:none;
 }
 /* 按 H 隱藏介面時，把讓給操作列的空間還給圖片 */
-.player.ui-hidden .stage{padding:6px}
+.player.ui-hidden .stage img{padding:6px}
 .stage.gray img{filter:grayscale(1)}
 .stage.flip img{transform:scaleX(-1)}
 .stage.gray.flip img{filter:grayscale(1)}
@@ -257,7 +264,7 @@ label.inline{display:inline-flex;align-items:center;gap:6px;margin:0 14px 6px 0;
 .toast[hidden]{display:none}
 
 @media (max-width:720px){
-  .stage{padding:38px 6px 54px}
+  .stage img{padding:38px 6px 54px}
   .sidebar{width:150px}
   .topbar{gap:10px;padding:0 10px}
   .brand small{display:none}
