@@ -192,19 +192,32 @@ label.inline{display:inline-flex;align-items:center;gap:6px;margin:0 14px 6px 0;
 .player[hidden]{display:none}
 .progress{height:4px;background:#1b1b1b;flex:none}
 .progress-fill{height:100%;width:0;background:var(--accent);transition:width .12s linear}
-.stage{flex:1;display:grid;place-items:center;overflow:hidden;padding:8px}
+/* min-height:0 是關鍵：在縱向 flex 容器裡，子項目預設 min-height 是 auto，
+   會被自己的內容（圖片的原始高度）撐開，於是高圖片會超出畫面下緣被切掉，
+   而 img 的 max-height:100% 也因為父層高度不確定而算不出來。設成 0 之後
+   .stage 的高度由 flex 決定，百分比才有意義，圖片就一定裝得進去。 */
+.stage{
+  flex:1 1 0;min-height:0;min-width:0;
+  display:grid;place-items:center;overflow:hidden;
+  padding:44px 10px 62px;              /* 讓開上下的操作列，圖片不會被蓋住 */
+}
 .stage img{
-  max-width:100%;max-height:100%;object-fit:contain;
+  max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;
   transition:filter .15s, transform .15s;
   -webkit-user-select:none;user-select:none;-webkit-user-drag:none;
 }
+/* 按 H 隱藏介面時，把讓給操作列的空間還給圖片 */
+.player.ui-hidden .stage{padding:6px}
 .stage.gray img{filter:grayscale(1)}
 .stage.flip img{transform:scaleX(-1)}
 .stage.gray.flip img{filter:grayscale(1)}
 
 .player-ui{position:absolute;inset:4px 0 0;pointer-events:none;transition:opacity .2s}
-.player-ui.hidden{opacity:0}
 .player-ui>*{pointer-events:auto}
+/* 隱藏時不只變透明，還要讓點擊穿過去 —— 否則會點到看不見的按鈕，
+   而且點不到圖片，就沒辦法把介面叫回來。 */
+.player-ui.hidden{opacity:0}
+.player-ui.hidden,.player-ui.hidden>*{pointer-events:none}
 .player-top{
   position:absolute;top:0;left:0;right:0;
   display:flex;align-items:center;gap:8px;padding:10px 14px;
@@ -240,6 +253,7 @@ label.inline{display:inline-flex;align-items:center;gap:6px;margin:0 14px 6px 0;
 .toast[hidden]{display:none}
 
 @media (max-width:720px){
+  .stage{padding:38px 6px 54px}
   .sidebar{width:150px}
   .topbar{gap:10px;padding:0 10px}
   .brand small{display:none}

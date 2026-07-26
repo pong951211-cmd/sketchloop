@@ -766,6 +766,7 @@ function startPractice(forcedIds) {
   $('#player').hidden = false;
   applyStageClasses();
   $('#playerUI').classList.remove('hidden');
+  $('#player').classList.remove('ui-hidden');
   togglePause(false);
   advance(1);
   P.last = performance.now();
@@ -1016,7 +1017,11 @@ function bind() {
   $('#pHide').addEventListener('click', toggleUI);
   $('#pQuit').addEventListener('click', quitPlayer);
   $('#pFull').addEventListener('click', toggleFullscreen);
-  $('#stage').addEventListener('click', () => togglePause());
+  // 介面隱藏時，點畫面先把介面叫回來（手機沒有鍵盤，這是唯一的退路）
+  $('#stage').addEventListener('click', () => {
+    if (P.hideUI) toggleUI();
+    else togglePause();
+  });
 
   $('#btnDoneClose').addEventListener('click', () => { $('#modalDone').hidden = true; });
   $('#btnDoneAgain').addEventListener('click', () => {
@@ -1056,6 +1061,8 @@ function bind() {
 function toggleUI() {
   P.hideUI = !P.hideUI;
   $('#playerUI').classList.toggle('hidden', P.hideUI);
+  $('#player').classList.toggle('ui-hidden', P.hideUI);   // 讓圖片用滿整個畫面
+  if (P.hideUI) toast('介面已隱藏 —— 點畫面任一處或按 H 可以叫回來', 3200);
 }
 
 function toggleFullscreen() {
