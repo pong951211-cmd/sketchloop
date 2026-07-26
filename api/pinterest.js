@@ -56,7 +56,10 @@ module.exports = async (req, res) => {
   const q = req.query || {};
   const raw = Array.isArray(q.url) ? q.url[0] : q.url;
   const limit = Math.max(1, Math.min(200, parseInt(q.limit, 10) || 40));
-  const bad = (code, error, extra = {}) => res.status(code).json({ ok: false, error, ...extra });
+  const bad = (code, error, extra = {}) => {
+    res.setHeader('Cache-Control', 'no-store');       // 失敗結果也不要被快取住
+    return res.status(code).json({ ok: false, error, ...extra });
+  };
 
   let board;
   try {
@@ -92,7 +95,8 @@ module.exports = async (req, res) => {
   const tried = [];
   let xml = null;
   for (const host of hosts) {
-    const rssUrl = `https://${host}/${boardPath}.rss`;
+    // 帶一個時間戳參數，避開 Pinterest 自己邊緣快取住的舊（有時不完整）版本
+    const rssUrl = `https://${host}/${boardPath}.rss?_=${Date.now()}`;
     try {
       const r = await fetch(rssUrl, {
         redirect: 'follow',
@@ -120,6 +124,9 @@ module.exports = async (req, res) => {
     return bad(404, '這個看板的 RSS 裡沒有圖片（可能是空看板）。', { tried });
   }
 
-  res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=3600');
+  /* 不要快取。原本設了 s-maxage=600，結果 Pinterest 偶爾回一份不完整的 feed
+     時（實測某個 15 張的看板有一次只回 6 筆），那個殘缺結果會被 Vercel 邊緣
+     快取十分鐘 —— 使用者重試也拿到同一份，等於沒救。每次都重新抓。 */
+  res.setHeader('Cache-Control', 'no-store');
   return res.status(200).json({ ok: true, source: 'rss', count: images.length, total, images });
 };

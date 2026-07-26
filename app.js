@@ -534,10 +534,16 @@ async function fetchBoardImages(boardUrl, limit) {
   // 1) 後端函式（部署後可用，最穩定）
   let backendErr = null;
   try {
-    const r = await fetch(`/api/pinterest?url=${encodeURIComponent(boardUrl)}&limit=${limit}`);
+    const r = await fetch(`/api/pinterest?url=${encodeURIComponent(boardUrl)}` +
+                          `&limit=${limit}&_=${Date.now()}`);
     const j = await r.json().catch(() => null);
     if (r.ok && j?.images?.length) {
-      if (j.total > j.count) logImport(`看板 RSS 提供 ${j.total} 張，依設定取 ${j.count} 張。`);
+      const total = j.total ?? j.count;
+      logImport(`Pinterest 提供這個看板 ${total} 筆，其中 ${j.count} 筆有圖片。`);
+      if (total < 10) {
+        logImport('提供的筆數偏少。Pinterest 對外只給看板的一部分（通常最新 20～25 筆），' +
+                  '偶爾還會回更少 —— 若你確定看板裡更多，等一下再抓一次可能會拿到更多。', false);
+      }
       return j.images;
     }
     if (j?.tried) j.tried.forEach(t => logImport(`　試過：${t}`, false));
@@ -613,7 +619,7 @@ async function importPinterest() {
   btn.disabled = true; btn.textContent = '抓取中…';
   try {
     const urls = await fetchBoardImages(url, limit);
-    logImport(`找到 ${urls.length} 張圖片，開始下載…`);
+    logImport(`取得 ${urls.length} 個圖片網址，開始下載…`);
     let ok = 0, fail = 0;
     for (const [i, u] of urls.entries()) {
       btn.textContent = `下載中… ${i + 1}/${urls.length}`;
