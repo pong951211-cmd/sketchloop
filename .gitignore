@@ -1,0 +1,10 @@
+# 從網頁下載的圖庫備份檔（可能很大，不要上傳）
+sketchloop-backup-*.json
+
+# 系統／編輯器產生的雜檔
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+node_modules/
+.vercel/
