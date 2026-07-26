@@ -85,16 +85,13 @@
       <h2>從 Pinterest 公開看板匯入</h2>
       <p class="muted">貼<strong>看板頁</strong>的連結，格式是 <code>pinterest.com/使用者/看板名/</code>。</p>
       <ul class="rules">
-        <li><strong>一次最多約 25 張</strong>，而且是看板裡「最新」的那些 —— 這是 Pinterest 對外只提供最新 25 筆的限制，不是設定問題。看板再大也只拿得到這些。</li>
+        <li>會把看板提供的圖<strong>全部</strong>抓回來，但那<strong>最多約 25 張</strong>，而且是看板裡「最新」的那些 —— Pinterest 對外只提供最新 20～25 筆，看板再大也拿不到更多。所以這裡沒有「抓幾張」可以設定。</li>
         <li>看板必須是<strong>公開</strong>的。私人看板、密友看板抓不到。</li>
         <li>網址要是看板頁。<strong>單張釘圖</strong>（<code>/pin/12345</code>）或<strong>個人首頁</strong>（<code>pinterest.com/使用者/</code>）都不行。</li>
         <li>只會抓看板裡真正的釘圖，不會混進 Pinterest 的推薦圖、頭像或介面圖示。</li>
       </ul>
       <input id="pinUrl" type="url" placeholder="https://www.pinterest.com/username/board-name/">
       <div class="row">
-        <label>最多抓取
-          <input id="pinLimit" type="number" value="40" min="1" max="200" class="num">
-        </label>
         <label>存到分類
           <select id="pinTarget" class="sel"></select>
         </label>

@@ -450,26 +450,43 @@ async function handleFiles(files) {
 /* ---------- 網址匯入 ---------- */
 
 function proxied(url) {
-  return [
-    url,
-    `https://images.weserv.nl/?url=${encodeURIComponent(url.replace(/^https?:\/\//, ''))}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  ];
+  const weserv = `https://images.weserv.nl/?url=${encodeURIComponent(url.replace(/^https?:\/\//, ''))}`;
+  const allorigins = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+  // i.pinimg.com 不回 CORS 許可標頭，瀏覽器直連一定被擋，就別白跑那一趟
+  return /\/\/i\.pinimg\.com\//.test(url)
+    ? [weserv, url, allorigins]
+    : [url, weserv, allorigins];
+}
+
+/* Pinterest 同一張圖有多種尺寸，而 /originals/ 不一定給（實測有些會回 403），
+   736x 幾乎都在。依序試，第一個成功的就用。 */
+const PIN_SIZES = ['/originals/', '/736x/', '/564x/'];
+
+function sizeVariants(url) {
+  const m = /\/(?:originals|\d+x\d*)\//.exec(url);
+  if (!m) return [url];
+  const others = PIN_SIZES.map(s => url.replace(m[0], s)).filter(u => u !== url);
+  return [url, ...new Set(others)];
+}
+
+/** 真的解碼一次，確認拿到的是圖片而不是錯誤頁。 */
+async function decodable(blob) {
+  try { const b = await createImageBitmap(blob); b.close?.(); return true; }
+  catch { return false; }
 }
 
 async function fetchImageBlob(url) {
-  // Pinterest 的 /originals/ 不一定存在，取不到就退一階拿 736 寬的版本
-  const candidates = [url];
-  if (url.includes('/originals/')) candidates.push(url.replace('/originals/', '/736x/'));
-
   let lastErr;
-  for (const c of candidates) {
+  for (const c of sizeVariants(url)) {
     for (const u of proxied(c)) {
       try {
         const r = await fetch(u, { mode: 'cors', referrerPolicy: 'no-referrer' });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const b = await r.blob();
         if (!b.size) throw new Error('空回應');
+        // 代理站有時會把上游的錯誤頁用 HTTP 200 包回來，所以不能只看狀態碼
+        if (b.type && !/^image\//.test(b.type)) throw new Error(`回傳的不是圖片（${b.type}）`);
+        if (!await decodable(b)) throw new Error('內容不是有效的圖片');
         return b;
       } catch (e) { lastErr = e; }
     }
@@ -508,6 +525,10 @@ async function importUrls() {
 }
 
 /* ---------- Pinterest 看板匯入 ---------- */
+
+/* 沒有「最多抓取」的設定：Pinterest 的看板 RSS 本身最多只給 20~25 筆，
+   讓使用者填一個永遠碰不到的上限只會造成誤解，直接全部拿回來。 */
+const PIN_MAX = 100;
 
 async function fetchBoardImages(boardUrl, limit) {
   // 1) 後端函式（部署後可用，最穩定）
@@ -586,7 +607,7 @@ async function importPinterest() {
   if (!/^https?:\/\/([\w-]+\.)*(pinterest\.[a-z.]+|pin\.it)\//i.test(url)) {
     return toast('請貼 Pinterest 看板連結');
   }
-  const limit = Math.max(1, Math.min(200, +$('#pinLimit').value || 40));
+  const limit = PIN_MAX;
   const catId = $('#pinTarget').value;
   const btn = $('#btnImportPin');
   btn.disabled = true; btn.textContent = '抓取中…';
