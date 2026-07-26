@@ -1,40 +1,40 @@
 /* Serverless function：抓取 Pinterest 公開看板的圖片連結。
    部署到 Vercel 後可用：GET /api/pinterest?url=<看板連結>&limit=40
-   回傳：{ ok, source, count, images: [imageUrl, ...] }
+   回傳：{ ok, source, count, total, images: [imageUrl, ...] }
 
-   在伺服器端抓取可避開瀏覽器的 CORS 限制，成功率比公共代理高很多。 */
+   為什麼只用 RSS：
+   看板的網頁（HTML）裡除了看板本身的釘圖，還混雜了使用者頭像、Pinterest
+   的介面圖示、以及「你可能也喜歡」的推薦圖，從外面看無法分辨哪張才是看板
+   內容 —— 早期版本直接掃整頁的 i.pinimg.com 連結，結果抓進大量無關圖片。
+   看板的 RSS（<看板網址>.rss）則是一個 <item> 對應一張真正的釘圖，精確得多。
+   代價是 Pinterest 的 RSS 只給最新的 20~25 張，所以抓不到整個大看板。 */
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
            '(KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
-const PINIMG_RE = /https:\/\/i\.pinimg\.com\/[^"'\\\s<>)]+?\.(?:jpg|jpeg|png|webp)/gi;
+const PINIMG_RE = /https:\/\/i\.pinimg\.com\/[^"'\s<>)]+?\.(?:jpg|jpeg|png|webp)/i;
 
-/** 把 236x / 474x / 736x 這類縮圖尺寸換成原圖，並去重。 */
-function collect(text, limit, out, seen) {
-  for (const m of text.matchAll(PINIMG_RE)) {
-    let url = m[0].replace(/\/(?:\d+x\d*|\d+x)\//, '/originals/');
-    // 忽略頭像、看板封面拼貼等雜圖
-    if (/\/(?:avatars|user_)/i.test(url)) continue;
+function unescapeXml(s) {
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+          .replace(/&amp;/g, '&');
+}
+
+/** 從 RSS 的每個 <item> 各取一張圖，並把縮圖尺寸換成原圖。 */
+function pinsFromRss(xml, limit) {
+  const items = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
+  const seen = new Set();
+  const images = [];
+  for (const item of items) {
+    const m = PINIMG_RE.exec(unescapeXml(item));
+    if (!m) continue;
+    const url = m[0].replace(/\/(?:\d+x\d*|\d+x\d+_RS)\//, '/originals/');
     const key = url.slice(url.lastIndexOf('/') + 1);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(url);
-    if (out.length >= limit) return out;
+    if (images.length < limit) images.push(url);
   }
-  return out;
-}
-
-async function get(url, accept) {
-  const res = await fetch(url, {
-    redirect: 'follow',
-    headers: {
-      'user-agent': UA,
-      'accept': accept,
-      'accept-language': 'zh-TW,zh;q=0.9,en;q=0.8',
-    },
-  });
-  if (!res.ok) throw new Error(`上游回應 HTTP ${res.status}`);
-  return res.text();
+  return { images, total: items.length };
 }
 
 module.exports = async (req, res) => {
@@ -52,42 +52,50 @@ module.exports = async (req, res) => {
     return res.status(400).json({ ok: false, error: '缺少或不合法的 url 參數' });
   }
   const host = board.hostname;
-  const allowedHost = /(^|\.)pinterest\.[a-z.]+$/i.test(host) || /(^|\.)pin\.it$/i.test(host);
-  if (!/^https?:$/.test(board.protocol) || !allowedHost) {
-    return res.status(400).json({ ok: false, error: '只支援 pinterest.* 或 pin.it 連結' });
+  if (!/^https?:$/.test(board.protocol) || !/(^|\.)pinterest\.[a-z.]+$/i.test(host)) {
+    return res.status(400).json({ ok: false, error: '請提供 pinterest.* 的看板連結' });
   }
-
-  const clean = board.origin + board.pathname.replace(/\/+$/, '');
-  const attempts = [
-    { source: 'rss',  url: `${clean}.rss`, accept: 'application/rss+xml,application/xml,text/xml,*/*' },
-    { source: 'html', url: `${clean}/`,    accept: 'text/html,application/xhtml+xml,*/*' },
-  ];
-
-  const images = [];
-  const seen = new Set();
-  const errors = [];
-  let source = null;
-
-  for (const a of attempts) {
-    if (images.length >= limit) break;
-    try {
-      const body = await get(a.url, a.accept);
-      const before = images.length;
-      collect(body, limit, images, seen);
-      if (images.length > before) source = source || a.source;
-    } catch (e) {
-      errors.push(`${a.source}: ${e.message}`);
-    }
-  }
-
-  if (!images.length) {
-    return res.status(502).json({
+  // 看板路徑必須是 /使用者/看板/
+  const parts = board.pathname.split('/').filter(Boolean);
+  if (parts.length < 2) {
+    return res.status(400).json({
       ok: false,
-      error: '抓不到圖片。請確認看板是公開的（Pinterest 有時也會擋機房 IP）。',
-      details: errors,
+      error: '這看起來不是看板連結。正確格式：https://www.pinterest.com/使用者/看板名/',
     });
   }
 
+  const rssUrl = `${board.origin}/${parts.slice(0, 2).join('/')}.rss`;
+
+  const notFound = {
+    ok: false,
+    error: '找不到這個看板。請確認：① 看板是公開的（不是私人或密友看板）② 連結是看板頁，不是單張釘圖或個人首頁 ③ 網址沒有打錯。',
+    rssUrl,
+  };
+
+  let body, ctype;
+  try {
+    const r = await fetch(rssUrl, {
+      redirect: 'follow',
+      headers: { 'user-agent': UA, 'accept': 'application/rss+xml,application/xml,text/xml' },
+    });
+    if (r.status === 404 || r.status === 403) return res.status(404).json(notFound);
+    ctype = r.headers.get('content-type') || '';
+    body = await r.text();
+    if (!r.ok) throw new Error(`Pinterest 回應 HTTP ${r.status}`);
+  } catch (e) {
+    return res.status(502).json({ ok: false, error: `連不到 Pinterest：${e.message}`, rssUrl });
+  }
+
+  // 關鍵驗證：拿到的必須真的是 RSS。看板不存在或不公開時，Pinterest 會回一頁
+  // HTML，若不檢查就會把那頁上的圖示、推薦圖當成看板內容抓回去。
+  const isXml = /xml/i.test(ctype) || body.trimStart().startsWith('<?xml');
+  if (!isXml) return res.status(404).json(notFound);
+
+  const { images, total } = pinsFromRss(body, limit);
+  if (!images.length) {
+    return res.status(404).json({ ok: false, error: '這個看板的 RSS 裡沒有圖片（可能是空看板）。', rssUrl });
+  }
+
   res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=3600');
-  return res.status(200).json({ ok: true, source, count: images.length, images });
+  return res.status(200).json({ ok: true, source: 'rss', count: images.length, total, images });
 };

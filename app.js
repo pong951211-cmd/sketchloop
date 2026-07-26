@@ -364,13 +364,20 @@ async function makeThumb(blob, max = 400) {
   }
 }
 
-async function addImage(blob, { name = '', catId = '' } = {}) {
+/* 從網路抓進來的圖，長邊小於這個像素就當成介面圖示／頭像之類的雜圖丟掉。
+   自己上傳的檔案不受限制。 */
+const MIN_IMPORT_PX = 240;
+
+async function addImage(blob, { name = '', catId = '', minPx = 0 } = {}) {
   if (!blob || !blob.size) throw new Error('空檔案');
   if (!/^image\//.test(blob.type || '')) {
     // 有些來源沒給 type，試著讓 createImageBitmap 驗證
     await createImageBitmap(blob).then(b => b.close?.());
   }
   const { thumb, w, h } = await makeThumb(blob);
+  if (minPx && w && h && Math.max(w, h) < minPx) {
+    throw new Error(`圖太小（${w}×${h}），略過`);
+  }
   const rec = { id: uid(), catId, name, blob, thumb, w, h,
                 size: blob.size + thumb.size, createdAt: Date.now() };
   await dbPut('images', rec);
@@ -405,15 +412,21 @@ function proxied(url) {
 }
 
 async function fetchImageBlob(url) {
+  // Pinterest 的 /originals/ 不一定存在，取不到就退一階拿 736 寬的版本
+  const candidates = [url];
+  if (url.includes('/originals/')) candidates.push(url.replace('/originals/', '/736x/'));
+
   let lastErr;
-  for (const u of proxied(url)) {
-    try {
-      const r = await fetch(u, { mode: 'cors', referrerPolicy: 'no-referrer' });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const b = await r.blob();
-      if (!b.size) throw new Error('空回應');
-      return b;
-    } catch (e) { lastErr = e; }
+  for (const c of candidates) {
+    for (const u of proxied(c)) {
+      try {
+        const r = await fetch(u, { mode: 'cors', referrerPolicy: 'no-referrer' });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const b = await r.blob();
+        if (!b.size) throw new Error('空回應');
+        return b;
+      } catch (e) { lastErr = e; }
+    }
   }
   throw new Error(lastErr?.message || '無法取得');
 }
@@ -438,7 +451,7 @@ async function importUrls() {
     btn.textContent = `匯入中… ${i + 1}/${urls.length}`;
     try {
       const blob = await fetchImageBlob(url);
-      await addImage(blob, { name: url.split('/').pop().slice(0, 60), catId });
+      await addImage(blob, { name: url.split('/').pop().slice(0, 60), catId, minPx: MIN_IMPORT_PX });
       ok++; logImport(`✓ ${url}`);
     } catch (e) { fail++; logImport(`✕ ${url} — ${e.message}`, false); }
   }
@@ -451,46 +464,61 @@ async function importUrls() {
 /* ---------- Pinterest 看板匯入 ---------- */
 
 async function fetchBoardImages(boardUrl, limit) {
-  // 1) 後端函式（部署後可用）
+  // 1) 後端函式（部署後可用，最穩定）
+  let backendErr = null;
   try {
     const r = await fetch(`/api/pinterest?url=${encodeURIComponent(boardUrl)}&limit=${limit}`);
-    if (r.ok) {
-      const j = await r.json();
-      if (Array.isArray(j.images) && j.images.length) return j.images;
-      if (j.error) throw new Error(j.error);
+    const j = await r.json().catch(() => null);
+    if (r.ok && j?.images?.length) {
+      if (j.total > j.count) logImport(`看板 RSS 提供 ${j.total} 張，依設定取 ${j.count} 張。`);
+      return j.images;
     }
-  } catch (e) { logImport(`後端函式不可用（${e.message}），改用公共代理…`, false); }
+    // 後端明確說「看板不存在／不公開」時，不需要再試代理
+    if (j?.error && r.status === 404) throw new Error(j.error);
+    backendErr = j?.error || `HTTP ${r.status}`;
+  } catch (e) {
+    if (e.message?.length > 20) throw e;      // 後端給的具體說明，直接往上丟
+    backendErr = e.message;
+  }
+  logImport(`後端函式不可用（${backendErr}），改用公共代理讀取看板 RSS…`, false);
 
-  // 2) 公共代理抓 HTML / RSS，再用正則抽 pinimg 連結
-  const rss = boardUrl.replace(/\/+$/, '') + '.rss';
-  const targets = [rss, boardUrl];
+  // 2) 本機沒有後端時：借公共代理讀看板的 RSS。
+  //    注意只讀 RSS，不去掃看板網頁 —— 網頁上混著頭像、介面圖示和推薦圖，
+  //    分不出哪張才是看板內容（這是舊版會抓進一堆無關圖片的原因）。
+  const parts = new URL(boardUrl).pathname.split('/').filter(Boolean);
+  const rss = `${new URL(boardUrl).origin}/${parts.slice(0, 2).join('/')}.rss`;
   const wrappers = [
     u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    u => `https://r.jina.ai/${u}`,
+    u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
   ];
-  for (const t of targets) {
-    for (const w of wrappers) {
-      try {
-        const r = await fetch(w(t));
-        if (!r.ok) continue;
-        const html = await r.text();
-        const found = extractPinimg(html, limit);
-        if (found.length) return found;
-      } catch {}
-    }
+  for (const w of wrappers) {
+    try {
+      const r = await fetch(w(rss));
+      if (!r.ok) continue;
+      const xml = await r.text();
+      if (!xml.trimStart().startsWith('<?xml')) continue;   // 不是 RSS 就放棄，別亂抓
+      const found = extractRssPins(xml, limit);
+      if (found.length) return found;
+    } catch {}
   }
-  throw new Error('抓不到看板內容（看板需為公開；本機代理成功率較低，部署後最穩定）');
+  throw new Error('抓不到看板 RSS。看板需為公開；本機用公共代理成功率較低，部署到線上後最穩定。');
 }
 
-function extractPinimg(html, limit) {
-  const re = /https:\/\/i\.pinimg\.com\/[^"'\\\s)]+?\.(?:jpg|jpeg|png|webp)/gi;
+/** 從看板 RSS 取圖：一個 <item> = 一張真正的釘圖。 */
+function extractRssPins(xml, limit) {
+  const items = xml.match(/<item>[\s\S]*?<\/item>/gi) || [];
+  const re = /https:\/\/i\.pinimg\.com\/[^"'\s<>)]+?\.(?:jpg|jpeg|png|webp)/i;
+  const unesc = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+                      .replace(/&quot;/g, '"').replace(/&amp;/g, '&');
   const seen = new Set(), out = [];
-  for (const m of html.matchAll(re)) {
-    const orig = m[0].replace(/\/(?:\d+x\d*|\d+x)\//, '/originals/');
-    const key = orig.split('/').pop();
+  for (const item of items) {
+    const m = re.exec(unesc(item));
+    if (!m) continue;
+    const url = m[0].replace(/\/(?:\d+x\d*|\d+x\d+_RS)\//, '/originals/');
+    const key = url.slice(url.lastIndexOf('/') + 1);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(orig);
+    out.push(url);
     if (out.length >= limit) break;
   }
   return out;
@@ -513,7 +541,7 @@ async function importPinterest() {
       btn.textContent = `下載中… ${i + 1}/${urls.length}`;
       try {
         const blob = await fetchImageBlob(u);
-        await addImage(blob, { name: u.split('/').pop().slice(0, 60), catId });
+        await addImage(blob, { name: u.split('/').pop().slice(0, 60), catId, minPx: MIN_IMPORT_PX });
         ok++;
       } catch (e) { fail++; logImport(`✕ ${u} — ${e.message}`, false); }
     }
